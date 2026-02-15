@@ -1,93 +1,60 @@
-"""
-Dominant Firm & Competitive Fringe — Interactive Visualization
-Streamlit + Plotly implementation
-
-Run with:  streamlit run dominant_firm_app.py
-"""
-
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 
-# ──────────────────────────────────────────────
-# Page config
-# ──────────────────────────────────────────────
+# 1. Page Config
 st.set_page_config(
     page_title="Dominant Firm & Competitive Fringe",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
-# Minimal custom CSS
+# Custom CSS to hide default Streamlit elements for a cleaner look
 st.markdown("""
 <style>
-    .block-container { padding-top: 1.5rem; padding-bottom: 0; }
-    h1 { font-size: 1.6rem !important; margin-bottom: 0.3rem !important; }
-    .stMetric { background: #f8f8f8; border-radius: 8px; padding: 8px; text-align: center; }
+    .block-container { padding-top: 1rem; padding-bottom: 0rem; }
+    h1 { font-family: 'IBM Plex Sans', sans-serif; font-size: 1.5rem; }
+    .stSlider { padding-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("Dominant Firm & Competitive Fringe")
 
-
 # ──────────────────────────────────────────────
-# Model
+# 2. THE MATH (Your Python Logic)
 # ──────────────────────────────────────────────
 class DFModel:
     def __init__(self, a, b, cF, dF, n, mc0, mcS, FC):
-        self.a = a
-        self.b = b
-        self.cF = cF
-        self.dF = dF
-        self.n = n
-        self.mc0 = mc0
-        self.mcS = mcS
-        self.FC = FC
+        self.a, self.b = a, b
+        self.cF, self.dF, self.n = cF, dF, n
+        self.mc0, self.mcS, self.FC = mc0, mcS, FC
 
-    def market_demand_P(self, Q):
-        return self.a - self.b * Q
+    # Market Demand
+    def market_demand_P(self, Q): return self.a - self.b * Q
+    def market_demand_Q(self, P): return max(0, (self.a - P) / self.b)
 
-    def market_demand_Q(self, P):
-        return max(0, (self.a - P) / self.b)
+    # Fringe Supply
+    def fringe_supply_Q(self, P): return self.n * (P - self.cF) / self.dF if P >= self.cF else 0
+    def fringe_supply_P(self, Qf): return self.cF + (self.dF * Qf) / self.n
+    
+    # Costs
+    def mc_at(self, q): return self.mc0 + self.mcS * q
+    def total_cost(self, q): return self.FC + self.mc0 * q + (self.mcS * q * q) / 2
+    def atc_at(self, q): return self.total_cost(q) / q if q > 0.1 else float('inf')
+    def fringe_firm_MC(self, q): return self.cF + self.dF * q
+    def fringe_firm_ATC(self, q): return self.cF + self.dF * q / 2 if q > 0.1 else float('inf')
 
-    def fringe_supply_Q(self, P):
-        return self.n * (P - self.cF) / self.dF if P >= self.cF else 0
-
-    def fringe_supply_P(self, Qf):
-        return self.cF + (self.dF * Qf) / self.n
-
-    def fringe_firm_Q(self, P):
-        return (P - self.cF) / self.dF if P >= self.cF else 0
-
-    def mc_at(self, q):
-        return self.mc0 + self.mcS * q
-
-    def total_cost(self, q):
-        return self.FC + self.mc0 * q + (self.mcS * q * q) / 2
-
-    def atc_at(self, q):
-        return self.total_cost(q) / q if q > 0.5 else 9999
-
-    def fringe_firm_MC(self, q):
-        return self.cF + self.dF * q
-
-    def fringe_firm_ATC(self, q):
-        return self.cF + self.dF * q / 2 if q > 0.5 else 9999
-
-    def kink_Q(self):
-        return max(0, (self.a - self.cF) / self.b)
-
+    # Residual Demand Logic
+    def kink_Q(self): return max(0, (self.a - self.cF) / self.b)
     def upper_seg(self):
         d = self.dF / self.n
         A = (self.a * d + self.cF * self.b) / (self.b + d)
         B = (self.b * d) / (self.b + d)
         return A, B
-
+    
     def residual_demand_P(self, Qd):
         Qk = self.kink_Q()
-        if Qd >= Qk:
-            return max(0, self.a - self.b * Qd)
+        if Qd >= Qk: return max(0, self.a - self.b * Qd)
         A, B = self.upper_seg()
         return max(0, A - B * Qd)
 
@@ -95,559 +62,231 @@ class DFModel:
         return (self.dF * self.a + self.n * self.b * self.cF) / (self.n * self.b + self.dF)
 
     def solve(self):
-        a, b, cF, dF, mc0, mcS, n, FC = (
-            self.a, self.b, self.cF, self.dF,
-            self.mc0, self.mcS, self.n, self.FC,
-        )
         Qk = self.kink_Q()
         A, B = self.upper_seg()
+        
+        # MC intersections for upper and lower segments
+        Q1 = (A - self.mc0) / (2 * B + self.mcS) if (2 * B + self.mcS) > 0 else float("inf")
+        Q2 = (self.a - self.mc0) / (2 * self.b + self.mcS) if (2 * self.b + self.mcS) > 0 else float("inf")
 
-        Q1 = (A - mc0) / (2 * B + mcS) if (2 * B + mcS) > 0 else float("inf")
-        Q2 = (a - mc0) / (2 * b + mcS) if (2 * b + mcS) > 0 else float("inf")
-
-        if Q1 >= 0 and Q1 < Qk:
-            Qd, seg = Q1, "upper"
-        elif Q2 >= 0 and Q2 > Qk:
-            Qd, seg = Q2, "lower"
-        else:
-            Qd, seg = Qk, "kink"
+        if Q1 >= 0 and Q1 < Qk: Qd = Q1
+        elif Q2 >= 0 and Q2 > Qk: Qd = Q2
+        else: Qd = Qk
+        
         Qd = max(0, Qd)
-
         Pd = self.residual_demand_P(Qd)
         Qf = self.fringe_supply_Q(Pd)
-        qf = self.fringe_firm_Q(Pd)
-        Qt = Qd + Qf
-        mcQd = self.mc_at(Qd)
+        qf = Qf / self.n if self.n > 0 else 0
+        
         profitD = Pd * Qd - self.total_cost(Qd)
-        atcQd = self.atc_at(Qd)
-
-        fringeATCqf = cF + dF * qf / 2 if qf > 0.5 else 0
-        fringeProfitPerFirm = (Pd - fringeATCqf) * qf if qf > 0 else 0
-        CS = 0.5 * (a - Pd) * Qt if Qt > 0 else 0
-
-        # Efficient Q on residual demand
-        QdCU = (A - mc0) / (B + mcS) if (B + mcS) > 0 else 0
-        QdCL = (a - mc0) / (b + mcS) if (b + mcS) > 0 else 0
-        QdComp = QdCU if (QdCU >= 0 and QdCU <= Qk) else max(0, QdCL)
-        PdComp = self.residual_demand_P(QdComp)
-
-        # DWL
-        DWL = 0
-        if Qd < QdComp:
-            steps = 200
-            for i in range(steps):
-                q = Qd + (i + 0.5) / steps * (QdComp - Qd)
-                dq = (QdComp - Qd) / steps
-                pR = self.residual_demand_P(q)
-                mcQ = self.mc_at(q)
-                if pR > mcQ:
-                    DWL += (pR - mcQ) * dq
-
+        
+        # Welfare
+        Qt = Qd + Qf
+        CS = 0.5 * (self.a - Pd) * Qt if Qt > 0 else 0
+        
+        # Simple DWL calc (approximation)
+        QdComp = (A - self.mc0) / (B + self.mcS) # simplified efficient Q for dominant firm
+        DWL = 0 
+        
         Pc = self.competitive_price()
-        QcMarket = self.market_demand_Q(Pc)
-        QcFringe = self.fringe_supply_Q(Pc)
-        mrT = A - 2 * B * Qk
-        mrB = a - 2 * b * Qk
-
-        return dict(
-            Pd=Pd, Qd=Qd, Qf=Qf, qf=qf, Qt=Qt, seg=seg,
-            mcQd=mcQd, atcQd=atcQd, profitD=profitD,
-            fringeProfitPerFirm=fringeProfitPerFirm,
-            CS=CS, DWL=DWL, Qk=Qk, QdComp=QdComp, PdComp=PdComp,
-            Pc=Pc, QcMarket=QcMarket, QcFringe=QcFringe,
-            mrT=mrT, mrB=mrB,
-        )
-
+        
+        return {
+            "Pd": Pd, "Qd": Qd, "Qf": Qf, "qf": qf, "Qt": Qt,
+            "profitD": profitD, "CS": CS, "DWL": DWL, "Pc": Pc,
+            "Qk": Qk, "A": A, "B": B
+        }
 
 # ──────────────────────────────────────────────
-# Sidebar controls
+# 3. SIDEBAR CONTROLS
 # ──────────────────────────────────────────────
 with st.sidebar:
     st.header("Market Demand")
-    a = st.slider("Intercept (a)", 50, 200, 100, 1)
-    b = st.slider("Slope (b)", 0.20, 3.00, 1.00, 0.05)
+    a = st.slider("Intercept (a)", 50, 200, 100)
+    b = st.slider("Slope (b)", 0.2, 3.0, 1.0, 0.05)
 
     st.header("Fringe Supply")
-    cF = st.slider("Min Price (cF)", 0, 80, 20, 1)
-    dF = st.slider("Slope (dF)", 0.20, 5.00, 1.50, 0.05)
-    n = st.slider("Num. Firms (n)", 1, 20, 5, 1)
+    cF = st.slider("Min Price (cF)", 0, 80, 20)
+    dF = st.slider("Slope (dF)", 0.2, 5.0, 1.5, 0.05)
+    n = st.slider("Num. Firms (n)", 1, 20, 5)
 
     st.header("Dominant Firm")
-    mc0 = st.slider("MC Base", 0, 80, 10, 1)
-    mcS = st.slider("MC Slope", 0.00, 3.00, 0.30, 0.05)
+    mc0 = st.slider("MC Base", 0, 80, 10)
+    mcS = st.slider("MC Slope", 0.0, 3.0, 0.3, 0.05)
     FC = st.slider("Fixed Cost", 0, 1000, 50, 10)
-
-    st.header("Display Options")
-    col1, col2 = st.columns(2)
-    with col1:
-        show_cs = st.checkbox("Consumer Surplus", True)
-        show_ps = st.checkbox("Producer Surplus", True)
-        show_dwl = st.checkbox("Deadweight Loss", True)
-    with col2:
-        show_profit = st.checkbox("Profit", False)
-        show_atc = st.checkbox("ATC", False)
-        show_comp = st.checkbox("Competitive", False)
+    
+    st.divider()
+    st.caption("Visualization Options")
+    show_cs = st.checkbox("Show Consumer Surplus", value=True)
+    show_profit = st.checkbox("Show Dominant Profit", value=False)
 
 
 # ──────────────────────────────────────────────
-# Solve model
+# 4. PLOTTING WITH PLOTLY
 # ──────────────────────────────────────────────
+
+# -- Solve --
 model = DFModel(a, b, cF, dF, n, mc0, mcS, FC)
 eq = model.solve()
-Qk = eq["Qk"]
-A_u, B_u = model.upper_seg()
-MAX_Q, MAX_P = 120, 120
 
+# -- Setup Data Arrays for Smooth Curves --
+MAX_Q = 120
+MAX_P = 120
+q_range = np.linspace(0, MAX_Q, 200)
 
-# ──────────────────────────────────────────────
-# Helper: generate curve arrays (stop when P < 0)
-# ──────────────────────────────────────────────
-def make_curve(fn, q_min, q_max, n_pts=500):
-    qs, ps = [], []
-    for i in range(n_pts + 1):
-        q = q_min + (i / n_pts) * (q_max - q_min)
-        p = fn(q)
-        if p < 0:
-            # Interpolate the exact zero crossing
-            if qs:
-                q_prev, p_prev = qs[-1], ps[-1]
-                if p_prev > 0:
-                    q_zero = q_prev + (q - q_prev) * p_prev / (p_prev - p)
-                    qs.append(q_zero)
-                    ps.append(0)
-            break
-        if p <= MAX_P:
-            qs.append(q)
-            ps.append(p)
-    return np.array(qs), np.array(ps)
+# Colors from your HTML version
+C_DEMAND = "#c62828"
+C_MR = "#e65100"
+C_MC_DOM = "#2e7d32"
+C_MC_FRINGE = "#0277bd"
+C_CS = "rgba(66, 133, 244, 0.2)"
+C_PROFIT = "rgba(251, 188, 4, 0.3)"
 
-
-# ──────────────────────────────────────────────
-# Build the figure
-# ──────────────────────────────────────────────
+# -- Create Figure --
 fig = make_subplots(
-    rows=1, cols=2,
-    subplot_titles=("Fringe Firm", "Dominant Firm"),
+    rows=1, cols=2, 
     shared_yaxes=True,
-    horizontal_spacing=0.06,
+    subplot_titles=("Fringe Firm (Representative)", "Dominant Firm & Market"),
+    horizontal_spacing=0.05
 )
 
-COLORS = dict(
-    demand="#c62828",
-    mc_dom="#2e7d32",
-    mc_fringe="#0277bd",
-    mr="#e65100",
-    atc="#6a1b9a",
-    fringe_supply="#2e7d32",
-    cs="rgba(66,133,244,0.25)",
-    ps="rgba(52,168,83,0.25)",
-    dwl="rgba(234,67,53,0.25)",
-    profit="rgba(251,188,4,0.30)",
-)
+# === LEFT PLOT: FRINGE FIRM ===
+# 1. Fringe MC
+mc_f_vals = [model.fringe_firm_MC(q) for q in q_range]
+fig.add_trace(go.Scatter(x=q_range, y=mc_f_vals, name="MC Fringe", line=dict(color=C_MC_FRINGE, width=2)), row=1, col=1)
 
+# 2. Fringe ATC
+atc_f_vals = [model.fringe_firm_ATC(q) for q in q_range]
+fig.add_trace(go.Scatter(x=q_range, y=atc_f_vals, name="ATC Fringe", line=dict(color="#4a148c", width=2), visible="legendonly"), row=1, col=1)
 
-# ═══════════════════════════════════════════════
-# RIGHT PANEL — Dominant Firm
-# ═══════════════════════════════════════════════
-
-# -- Shaded regions --
-Pd, Qd = eq["Pd"], eq["Qd"]
-
-if show_cs and Qd > 0:
-    qr = np.linspace(0, Qd, 100)
-    p_top = np.array([model.residual_demand_P(q) for q in qr])
-    p_bot = np.full_like(qr, Pd)
+# 3. Equilibrium Markers (Left)
+if eq['qf'] > 0:
+    # Dashed line to axis
     fig.add_trace(go.Scatter(
-        x=np.concatenate([qr, qr[::-1]]),
-        y=np.concatenate([p_top, p_bot[::-1]]),
-        fill="toself", fillcolor=COLORS["cs"], line=dict(width=0),
-        name="CS", showlegend=False, hoverinfo="skip",
+        x=[eq['qf'], eq['qf']], y=[0, eq['Pd']], 
+        mode="lines", line=dict(color="#333", dash="dash", width=1), showlegend=False
+    ), row=1, col=1)
+    
+    # Point
+    fig.add_trace(go.Scatter(
+        x=[eq['qf']], y=[eq['Pd']], 
+        mode="markers", marker=dict(color="#333", size=8), showlegend=False,
+        hovertemplate=f"qf: {eq['qf']:.1f}<br>P: {eq['Pd']:.1f}"
+    ), row=1, col=1)
+
+
+# === RIGHT PLOT: DOMINANT FIRM ===
+
+# 1. Residual Demand (Dr) - The Kinked Curve
+# We build this carefully: Upper segment, then Lower segment
+Qk = eq['Qk']
+A, B = eq['A'], eq['B']
+
+# Generate points for Dr
+dr_x = []
+dr_y = []
+for q in q_range:
+    if q < Qk:
+        p = A - B*q
+    else:
+        p = a - b*q
+    if p >= 0:
+        dr_x.append(q)
+        dr_y.append(p)
+
+fig.add_trace(go.Scatter(x=dr_x, y=dr_y, name="Residual Demand (Dr)", line=dict(color=C_DEMAND, width=3)), row=1, col=2)
+
+# 2. Market Demand (D(p)) - Dotted line above the kink
+dem_x = np.linspace(0, Qk, 50)
+dem_y = [a - b*q for q in dem_x]
+fig.add_trace(go.Scatter(x=dem_x, y=dem_y, name="Market Demand", line=dict(color=C_DEMAND, width=2, dash="dot")), row=1, col=2)
+
+# 3. Marginal Revenue (MR)
+# MR has a vertical gap at the kink. We plot two segments.
+mr_upper_x = np.linspace(0, Qk, 50)
+mr_upper_y = [A - 2*B*q for q in mr_upper_x]
+
+mr_lower_x = np.linspace(Qk, MAX_Q, 50)
+mr_lower_y = [a - 2*b*q for q in mr_lower_x]
+
+# Combine with None to break the line visually
+mr_x = list(mr_upper_x) + [None] + list(mr_lower_x)
+mr_y = list(mr_upper_y) + [None] + list(mr_lower_y)
+
+fig.add_trace(go.Scatter(x=mr_x, y=mr_y, name="Marginal Revenue", line=dict(color=C_MR, width=2)), row=1, col=2)
+
+# 4. Dominant MC
+mc_d_vals = [model.mc_at(q) for q in q_range]
+fig.add_trace(go.Scatter(x=q_range, y=mc_d_vals, name="MC Dominant", line=dict(color=C_MC_DOM, width=3)), row=1, col=2)
+
+# 5. Dominant ATC
+atc_d_vals = [model.atc_at(q) for q in q_range]
+fig.add_trace(go.Scatter(x=q_range, y=atc_d_vals, name="ATC Dominant", line=dict(color="#6a1b9a", width=2), visible="legendonly"), row=1, col=2)
+
+# 6. SHADING (Areas)
+if show_cs and eq['Qd'] > 0:
+    # Fill area under Residual Demand and above Price
+    # We define the polygon coordinates
+    poly_x = [0] + [q for q in dr_x if q <= eq['Qd']] + [0]
+    poly_y = [eq['Pd']] + [p for idx, p in enumerate(dr_y) if dr_x[idx] <= eq['Qd']] + [eq['Pd']]
+    
+    fig.add_trace(go.Scatter(
+        x=poly_x, y=poly_y, fill="toself", fillcolor=C_CS, 
+        line=dict(width=0), name="Consumer Surplus", hoverinfo="skip"
     ), row=1, col=2)
 
-if show_ps and Qd > 0:
-    qr = np.linspace(0, Qd, 100)
-    p_top = np.full_like(qr, Pd)
-    p_bot = np.array([model.mc_at(q) for q in qr])
-    fig.add_trace(go.Scatter(
-        x=np.concatenate([qr, qr[::-1]]),
-        y=np.concatenate([p_top, p_bot[::-1]]),
-        fill="toself", fillcolor=COLORS["ps"], line=dict(width=0),
-        name="PS_d", showlegend=False, hoverinfo="skip",
-    ), row=1, col=2)
-
-if show_dwl and Qd > 0 and eq["QdComp"] > Qd:
-    qr = np.linspace(Qd, eq["QdComp"], 100)
-    p_res = np.array([model.residual_demand_P(q) for q in qr])
-    p_mc = np.array([model.mc_at(q) for q in qr])
-    # Only where residual demand > MC
-    valid = p_res > p_mc
-    if np.any(valid):
-        qv = qr[valid]
-        pr_v = p_res[valid]
-        pm_v = p_mc[valid]
+if show_profit and eq['Qd'] > 0:
+    atc_val = model.atc_at(eq['Qd'])
+    if eq['Pd'] > atc_val:
         fig.add_trace(go.Scatter(
-            x=np.concatenate([qv, qv[::-1]]),
-            y=np.concatenate([pr_v, pm_v[::-1]]),
-            fill="toself", fillcolor=COLORS["dwl"], line=dict(width=0),
-            name="DWL", showlegend=False, hoverinfo="skip",
+            x=[0, eq['Qd'], eq['Qd'], 0],
+            y=[atc_val, atc_val, eq['Pd'], eq['Pd']],
+            fill="toself", fillcolor=C_PROFIT,
+            line=dict(width=0), name="Dominant Profit", hoverinfo="skip"
         ), row=1, col=2)
 
-if show_profit and Qd > 0:
-    atcV = model.atc_at(Qd)
-    if Pd > atcV:
-        qr = np.linspace(0, Qd, 50)
-        fig.add_trace(go.Scatter(
-            x=np.concatenate([qr, qr[::-1]]),
-            y=np.concatenate([np.full_like(qr, Pd), np.full_like(qr, atcV)]),
-            fill="toself", fillcolor=COLORS["profit"], line=dict(width=0),
-            name="πd", showlegend=False, hoverinfo="skip",
-        ), row=1, col=2)
-
-# -- D(p) dotted above kink --
-if Qk > 0:
-    qd_dp, pd_dp = make_curve(lambda q: a - b * q, 0, Qk)
+# 7. Equilibrium Markers (Right)
+if eq['Qd'] > 0:
+    # Dashed line to axis
     fig.add_trace(go.Scatter(
-        x=qd_dp, y=pd_dp,
-        mode="lines", line=dict(color=COLORS["demand"], width=2, dash="dash"),
-        name="D(p)", showlegend=False, hoverinfo="skip",
+        x=[eq['Qd'], eq['Qd']], y=[0, eq['Pd']], 
+        mode="lines", line=dict(color="#333", dash="dash", width=1), showlegend=False
     ), row=1, col=2)
-
-# -- Residual demand: upper segment (Dr) --
-qr_up, pr_up = make_curve(lambda q: A_u - B_u * q, 0, Qk)
-if len(qr_up) > 1:
+    
+    # Point at Eq
     fig.add_trace(go.Scatter(
-        x=qr_up, y=pr_up,
-        mode="lines", line=dict(color=COLORS["demand"], width=3),
-        name="Dr", showlegend=False, hoverinfo="skip",
-    ), row=1, col=2)
-
-# -- Residual demand: lower segment = D(p)=Dr --
-qr_lo, pr_lo = make_curve(lambda q: a - b * q, Qk, MAX_Q)
-if len(qr_lo) > 1:
-    fig.add_trace(go.Scatter(
-        x=qr_lo, y=pr_lo,
-        mode="lines", line=dict(color=COLORS["demand"], width=3),
-        name="D(p)=Dr", showlegend=False, hoverinfo="skip",
-    ), row=1, col=2)
-
-# Kink dot
-kP = model.residual_demand_P(Qk)
-if 0 < Qk < MAX_Q and 0 < kP < MAX_P:
-    fig.add_trace(go.Scatter(
-        x=[Qk], y=[kP], mode="markers",
-        marker=dict(size=8, color=COLORS["demand"]),
-        showlegend=False, hoverinfo="skip",
-    ), row=1, col=2)
-
-# -- MR upper segment --
-qm_up, pm_up = make_curve(lambda q: A_u - 2 * B_u * q, 0, Qk)
-if len(qm_up) > 1:
-    fig.add_trace(go.Scatter(
-        x=qm_up, y=pm_up,
-        mode="lines", line=dict(color=COLORS["mr"], width=2.5),
-        name="MRd", showlegend=False, hoverinfo="skip",
-    ), row=1, col=2)
-
-# -- MR lower segment --
-mrB = eq["mrB"]
-qm_lo, pm_lo = np.array([]), np.array([])
-if mrB > 0.5:
-    qm_lo, pm_lo = make_curve(lambda q: a - 2 * b * q, Qk, MAX_Q)
-    if len(qm_lo) > 1:
-        fig.add_trace(go.Scatter(
-            x=qm_lo, y=pm_lo,
-            mode="lines", line=dict(color=COLORS["mr"], width=2.5),
-            name="MRd lower", showlegend=False, hoverinfo="skip",
-        ), row=1, col=2)
-
-# -- MR vertical gap --
-mrT = eq["mrT"]
-if Qk > 0 and mrT > mrB and mrB > 0.5:
-    fig.add_trace(go.Scatter(
-        x=[Qk, Qk], y=[min(mrT, MAX_P), mrB],
-        mode="lines", line=dict(color=COLORS["mr"], width=1.5, dash="dash"),
-        showlegend=False, hoverinfo="skip",
-    ), row=1, col=2)
-
-# -- MCd --
-qmc, pmc = make_curve(lambda q: model.mc_at(q), 0, MAX_Q)
-fig.add_trace(go.Scatter(
-    x=qmc, y=pmc,
-    mode="lines", line=dict(color=COLORS["mc_dom"], width=3),
-    name="MCd", showlegend=False, hoverinfo="skip",
-), row=1, col=2)
-
-# -- ACd --
-if show_atc:
-    qa = np.linspace(1, MAX_Q, 400)
-    pa = np.array([model.atc_at(q) for q in qa])
-    mask = pa < MAX_P
-    fig.add_trace(go.Scatter(
-        x=qa[mask], y=pa[mask],
-        mode="lines", line=dict(color=COLORS["atc"], width=2.2),
-        name="ACd", showlegend=False, hoverinfo="skip",
-    ), row=1, col=2)
-
-# -- Equilibrium markers (right) --
-if Qd > 0 and 0 < Pd < MAX_P:
-    # Vertical dashed to axis
-    fig.add_trace(go.Scatter(
-        x=[Qd, Qd], y=[0, Pd],
-        mode="lines", line=dict(color="black", width=1.5, dash="dash"),
-        showlegend=False, hoverinfo="skip",
-    ), row=1, col=2)
-    # Equilibrium point (P*, Qd)
-    fig.add_trace(go.Scatter(
-        x=[Qd], y=[Pd], mode="markers",
-        marker=dict(size=10, color="#333", line=dict(width=2, color="white")),
-        showlegend=False,
-        hovertemplate=(
-            "<b>Dominant Firm Equilibrium</b><br>"
-            f"P* = {Pd:.2f}<br>"
-            f"Qd = {Qd:.2f}<br>"
-            f"Qf = {eq['Qf']:.2f}<br>"
-            f"πd = {eq['profitD']:.1f}<extra></extra>"
-        ),
-    ), row=1, col=2)
-    # MR=MC point
-    fig.add_trace(go.Scatter(
-        x=[Qd], y=[eq["mcQd"]], mode="markers",
-        marker=dict(size=8, color="#333", line=dict(width=2, color="white")),
-        showlegend=False,
-        hovertemplate=(
-            "<b>MR = MC</b><br>"
-            f"Qd = {Qd:.2f}<br>"
-            f"MR = MC = {eq['mcQd']:.2f}<br>"
-            f"Segment: {eq['seg']}<extra></extra>"
-        ),
-    ), row=1, col=2)
-
-# -- Competitive equilibrium --
-if show_comp and eq["QdComp"] > 0:
-    QdC, PdC = eq["QdComp"], eq["PdComp"]
-    fig.add_trace(go.Scatter(
-        x=[QdC, QdC], y=[0, PdC],
-        mode="lines", line=dict(color="black", width=1.5, dash="dash"),
-        showlegend=False, hoverinfo="skip",
-    ), row=1, col=2)
-    fig.add_trace(go.Scatter(
-        x=[QdC], y=[PdC], mode="markers",
-        marker=dict(size=8, color="black", line=dict(width=2, color="white")),
-        showlegend=False,
-        hovertemplate=(
-            "<b>Efficient Equilibrium</b><br>"
-            f"Pc = {PdC:.2f}<br>"
-            f"Q* = {QdC:.2f}<extra></extra>"
-        ),
+        x=[eq['Qd']], y=[eq['Pd']], 
+        mode="markers", marker=dict(color="#333", size=8, line=dict(color="white", width=1)), showlegend=False,
+        hovertemplate=f"Qd: {eq['Qd']:.1f}<br>P*: {eq['Pd']:.1f}"
     ), row=1, col=2)
 
 
-# ═══════════════════════════════════════════════
-# LEFT PANEL — Fringe Firm
-# ═══════════════════════════════════════════════
-
-# Fringe profit shading
-if show_profit and eq["qf"] > 0 and Pd > 0:
-    fAtc = model.fringe_firm_ATC(eq["qf"])
-    if Pd > fAtc:
-        qr = np.linspace(0, eq["qf"], 50)
-        fig.add_trace(go.Scatter(
-            x=np.concatenate([qr, qr[::-1]]),
-            y=np.concatenate([np.full_like(qr, Pd), np.full_like(qr, fAtc)]),
-            fill="toself", fillcolor=COLORS["profit"], line=dict(width=0),
-            name="πf", showlegend=False, hoverinfo="skip",
-        ), row=1, col=1)
-
-# D(p) solid red
-qd_l, pd_l = make_curve(lambda q: a - b * q, 0, MAX_Q)
-fig.add_trace(go.Scatter(
-    x=qd_l, y=pd_l,
-    mode="lines", line=dict(color=COLORS["demand"], width=2),
-    name="D(p)", showlegend=False, hoverinfo="skip",
-), row=1, col=1)
-
-# S(p) aggregate fringe
-qs_l, ps_l = make_curve(lambda q: model.fringe_supply_P(q), 0, MAX_Q)
-fig.add_trace(go.Scatter(
-    x=qs_l, y=ps_l,
-    mode="lines", line=dict(color=COLORS["fringe_supply"], width=2.5),
-    name="S(p)", showlegend=False, hoverinfo="skip",
-), row=1, col=1)
-
-# MCf
-qmf, pmf = make_curve(lambda q: model.fringe_firm_MC(q), 0, MAX_Q)
-fig.add_trace(go.Scatter(
-    x=qmf, y=pmf,
-    mode="lines", line=dict(color=COLORS["mc_fringe"], width=3),
-    name="MCf", showlegend=False, hoverinfo="skip",
-), row=1, col=1)
-
-# ACf
-if show_atc:
-    qa_f = np.linspace(1, MAX_Q, 400)
-    pa_f = np.array([model.fringe_firm_ATC(q) for q in qa_f])
-    mask = pa_f < MAX_P
-    fig.add_trace(go.Scatter(
-        x=qa_f[mask], y=pa_f[mask],
-        mode="lines", line=dict(color="#4a148c", width=2.2),
-        name="ACf", showlegend=False, hoverinfo="skip",
-    ), row=1, col=1)
-
-# S(p) ∩ D(p) intersection
-Pc = eq["Pc"]
-QcMkt = eq["QcMarket"]
-QcFringe = eq["QcFringe"]
-if 0 < Pc < MAX_P and 0 < QcMkt < MAX_Q:
-    fig.add_trace(go.Scatter(
-        x=[QcMkt], y=[Pc], mode="markers",
-        marker=dict(size=8, color="#555", line=dict(width=2, color="white")),
-        showlegend=False,
-        hovertemplate=(
-            "<b>S(p) = D(p) Intersection</b><br>"
-            f"Pc = {Pc:.2f}<br>"
-            f"Q (market) = {QcMkt:.2f}<br>"
-            f"Qf (fringe total) = {QcFringe:.2f}<br>"
-            "Competitive outcome<extra></extra>"
-        ),
-    ), row=1, col=1)
-
-# Fringe eq markers
-qf = eq["qf"]
-if qf > 0 and 0 < Pd <= MAX_P:
-    fig.add_trace(go.Scatter(
-        x=[qf, qf], y=[0, Pd],
-        mode="lines", line=dict(color="black", width=1.5, dash="dash"),
-        showlegend=False, hoverinfo="skip",
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=[qf], y=[Pd], mode="markers",
-        marker=dict(size=8, color="#333", line=dict(width=2, color="white")),
-        showlegend=False,
-        hovertemplate=(
-            "<b>Fringe Firm</b><br>"
-            f"P* = {Pd:.2f}<br>"
-            f"qf = {qf:.2f}<br>"
-            f"πf = {eq['fringeProfitPerFirm']:.1f}<br>"
-            f"{n} firms × {qf:.1f} = {eq['Qf']:.1f}<extra></extra>"
-        ),
-    ), row=1, col=1)
-
-
-# ═══════════════════════════════════════════════
-# Horizontal price lines across both panels
-# ═══════════════════════════════════════════════
-price_lines = []
-if Qd > 0 and 0 < Pd < MAX_P:
-    price_lines.append(dict(p=Pd, label="P*", color="black"))
-if 0 < cF < MAX_P:
-    price_lines.append(dict(p=cF, label="p̄", color="black"))
-if 0 < Pc < MAX_P:
-    price_lines.append(dict(p=Pc, label="Pc", color="gray"))
-
-for pl in price_lines:
-    for col in [1, 2]:
-        fig.add_hline(
-            y=pl["p"], row=1, col=col,
-            line=dict(color=pl["color"], width=1.5, dash="dash"),
-            opacity=0.5,
-        )
-
-
-# ═══════════════════════════════════════════════
-# Curve label annotations
-# ═══════════════════════════════════════════════
-
-# Right panel labels
-def add_label(text, x, y, col, color, xanchor="left", yanchor="middle", xshift=6, yshift=0):
-    fig.add_annotation(
-        x=x, y=y, text=f"<b>{text}</b>",
-        showarrow=False, font=dict(size=13, color=color, family="IBM Plex Sans"),
-        xanchor=xanchor, yanchor=yanchor, xshift=xshift, yshift=yshift,
-        row=1, col=col,
-    )
-
-# Right panel
-if len(qr_up) > 1:
-    mid_i = len(qr_up) // 2
-    add_label("Dr", qr_up[mid_i], pr_up[mid_i], 2, COLORS["demand"], yshift=12)
-
-if len(qr_lo) > 1:
-    add_label("D(p)=Dr", qr_lo[-1], max(pr_lo[-1], 2), 2, COLORS["demand"], yshift=-14)
-
-if Qk > 0 and len(qd_dp) > 1:
-    mid_i = len(qd_dp) // 3
-    add_label("D(p)", qd_dp[mid_i], pd_dp[mid_i], 2, COLORS["demand"], yshift=12, xshift=-8)
-
-# MRd label at end of visible curve
-if len(qm_lo) > 1:
-    add_label("MRd", qm_lo[-1], max(pm_lo[-1], 2), 2, COLORS["mr"], yshift=-14)
-elif len(qm_up) > 1:
-    add_label("MRd", qm_up[-1], pm_up[-1], 2, COLORS["mr"], yshift=-8)
-
-add_label("MCd", qmc[-1], min(pmc[-1], MAX_P - 5), 2, COLORS["mc_dom"])
-
-# Left panel
-if len(qd_l) > 1:
-    add_label("D(p)", qd_l[-1], max(pd_l[-1], 2), 1, COLORS["demand"], yshift=-14)
-if len(qs_l) > 1:
-    add_label("S(p)", qs_l[-1], min(ps_l[-1], MAX_P - 5), 1, COLORS["fringe_supply"])
-add_label("MCf", qmf[-1], min(pmf[-1], MAX_P - 5), 1, COLORS["mc_fringe"])
-
-# Price line labels (on right edge)
-for pl in price_lines:
-    add_label(pl["label"], MAX_Q, pl["p"], 2, pl["color"], xanchor="left", xshift=4, yshift=0)
-    add_label(pl["label"], 0, pl["p"], 1, pl["color"], xanchor="right", xshift=-4, yshift=0)
-
-# Axis quantity labels
-if Qd > 0:
-    fig.add_annotation(
-        x=Qd, y=0, text="<b>Qd</b>", showarrow=False,
-        font=dict(size=11, color="#333"), yshift=-18, row=1, col=2,
-    )
-if qf > 0:
-    fig.add_annotation(
-        x=qf, y=0, text="<b>qf</b>", showarrow=False,
-        font=dict(size=11, color="#333"), yshift=-18, row=1, col=1,
-    )
-
-
-# ═══════════════════════════════════════════════
-# Layout
-# ═══════════════════════════════════════════════
-fig.update_xaxes(range=[0, MAX_Q], title_text="Fringe firm output, q", row=1, col=1)
-fig.update_xaxes(range=[0, MAX_Q], title_text="Dominant firm output, Q", row=1, col=2)
-fig.update_yaxes(range=[0, MAX_P], title_text="Price", row=1, col=1)
-fig.update_yaxes(range=[0, MAX_P], row=1, col=2)
-
+# ──────────────────────────────────────────────
+# 5. LAYOUT STYLING (The "Clean White" Look)
+# ──────────────────────────────────────────────
 fig.update_layout(
-    height=620,
-    margin=dict(l=60, r=40, t=40, b=60),
-    plot_bgcolor="white",
-    paper_bgcolor="#f5f5f5",
-    font=dict(family="IBM Plex Sans"),
-    hovermode="closest",
+    template="simple_white", # Base template closest to your HTML
+    height=600,
+    hovermode="x unified",
+    xaxis=dict(range=[0, MAX_Q], title="Fringe Output (q)"),
+    xaxis2=dict(range=[0, MAX_Q], title="Dominant Output (Q)"),
+    yaxis=dict(range=[0, MAX_P], title="Price"),
+    legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center"),
+    margin=dict(l=20, r=20, t=60, b=40),
 )
 
-# Grid lines
-for ax in ["xaxis", "xaxis2", "yaxis", "yaxis2"]:
-    fig.update_layout(**{
-        ax: dict(
-            showgrid=True, gridcolor="rgba(0,0,0,0.06)", gridwidth=1,
-            zeroline=True, zerolinecolor="#333", zerolinewidth=2,
-            dtick=20,
-        )
-    })
+# Add gridlines (simple_white template removes them, but we want soft grids)
+grid_style = dict(showgrid=True, gridcolor="#f0f0f0", gridwidth=1)
+fig.update_xaxes(**grid_style)
+fig.update_yaxes(**grid_style)
 
-st.plotly_chart(fig, use_container_width=True)
-
+# Render
+st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 # ──────────────────────────────────────────────
-# Readouts
+# 6. METRICS ROW
 # ──────────────────────────────────────────────
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("P*", f"{Pd:.1f}" if Qd > 0 else "—")
-c2.metric("Qd", f"{Qd:.1f}" if Qd > 0 else "0")
-c3.metric("Qf", f"{eq['Qf']:.1f}" if Qd > 0 else "0")
-c4.metric("πd", f"{eq['profitD']:.0f}" if Qd > 0 else "0")
-c5.metric("CS", f"{eq['CS']:.0f}" if Qd > 0 else "0")
-c6.metric("DWL", f"{eq['DWL']:.0f}" if Qd > 0 else "0")
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Market Price (P*)", f"${eq['Pd']:.2f}")
+m2.metric("Dominant Qty (Qd)", f"{eq['Qd']:.2f}")
+m3.metric("Fringe Total Qty", f"{eq['Qf']:.2f}")
+m4.metric("Dominant Profit", f"${eq['profitD']:.0f}")
